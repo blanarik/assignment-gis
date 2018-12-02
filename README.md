@@ -18,8 +18,6 @@ Build a map-based application, which lets the user see geo-based data on a map a
 
 ## My project
 
-Fill in (either in English, or in Slovak):
-
 **Application description**: Application shows Slovak districts and their interesting places recalling Slovak history along with nearby places to sleep.
 
 **Data source**: Open Street Maps (Slovak region)
