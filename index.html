@@ -33,7 +33,7 @@
         meters from attraction.
     </span>
     <span>
-        Busy hotel is closer than
+        Noisy hotel means it is closer than
         <input id="distance-hotel-road" type="number" value="1000" min="1" max="">
         meters from highway or rails.
     </span>
@@ -187,13 +187,14 @@
             body: JSON.stringify(request)
         });
         var data = await response.json();
+
+        var mapLayer = map.getLayer('hotels-layer');
+        if (typeof mapLayer !== 'undefined')
+            map.removeLayer('hotels-layer').removeSource('hotels-layer');
+
         if(data == null)
             alert('No hotels meet given requirements');
         else {
-            var mapLayer = map.getLayer('hotels-layer');
-            if (typeof mapLayer !== 'undefined')
-                map.removeLayer('hotels-layer').removeSource('hotels-layer');
-
             map.addLayer({
                 "id": "hotels-layer",
                 "type": "symbol",

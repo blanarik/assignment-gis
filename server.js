@@ -8,7 +8,7 @@ const db = pgp('postgres://tester:pwd@localhost:5432/slovakia_geo')
 const bodyParser = require('body-parser');
 var jsonParser = bodyParser.json({ type: 'application/json'});
 
-const VIEW_PATH = 'C:\\Users\\Patrik\\Desktop\\ING1\\PDT\\project\\myIndex.html';
+const VIEW_PATH = 'index.html';
 
 // API
 
@@ -136,7 +136,7 @@ app.post('/api/get-local-attractions', jsonParser, async function(req, res) {
                 "type": "Feature",
                 "geometry": JSON.parse(data[i].geo),
                 "properties": {
-                    "name": data[i].name,
+                    "name": data[i].name == null ? '-' : data[i].name,
                     "type": data[i].type,
                     "icon": icon,
                     "osm_id": data[i].osm_id
@@ -155,10 +155,6 @@ app.post('/api/get-nearby-hotels', jsonParser, async function(req, res) {
     var attraction_osm_id = req.body.osm_id;
     var distance_hotel_attraction = req.body.distance_hotel_attraction;
     var distance_hotel_road = req.body.distance_hotel_road;
-
-    console.log(attraction_osm_id);
-    console.log(distance_hotel_attraction);
-    console.log(distance_hotel_road);
 
     db.many("\
         WITH attraction AS\
@@ -211,7 +207,7 @@ app.post('/api/get-nearby-hotels', jsonParser, async function(req, res) {
                 "type": "Feature",
                 "geometry": JSON.parse(data[i].geo),
                 "properties": {
-                    "name": data[i].name,
+                    "name": data[i].name == null ? '-' : data[i].name,
                     "type": data[i].tourism,
                     "icon": "lodging",
                     "distance_to_noise": data[i].distance_to_noise
@@ -221,7 +217,6 @@ app.post('/api/get-nearby-hotels', jsonParser, async function(req, res) {
         res.json(features);
     })
     .catch(function (error) {
-        console.log('ERROR:', error);
         res.json(null);
     })
 })
@@ -231,7 +226,7 @@ app.post('/api/get-nearby-hotels', jsonParser, async function(req, res) {
 // init server
 
 app.get('/', async function(req, res) {
-    res.sendFile(VIEW_PATH);
+    res.sendFile(VIEW_PATH, {root: __dirname});
 });
 
 app.listen(port, () => console.log(`App listening on port ${port}!`))
