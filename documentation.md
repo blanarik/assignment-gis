@@ -1,62 +1,163 @@
-*This is a documentation for a fictional project, just to show you what I expect. Notice a few key properties:*
-- *no cover page, really*
-- *no copy&pasted assignment text*
-- *no code samples*
-- *concise, to the point, gets me a quick overview of what was done and how*
-- *I don't really care about the document length*
-- *I used links where appropriate*
-
 # Overview
 
-This application shows hotels in Bratislava on a map. Most important features are:
-- search by proximity to my current location
-- search by hotel name
-- intelligent ordering - by proximity and by hotel features
-- hotels on the map are color coded by their quality assigned in stars (standard)
+This application shows districts of Slovakia along with interesting places recalling Slovak history. Those are namely: monuments, castles, ruins, memorials, museums and galleries. Provided features are:
+
+- map all Slovak districts to appropriate place on a map and provide either basic or more complex information about them
+- list all interesting places recalling Slovak history in a selected district
+- search places to sleep near selected interesting place (hotels, motels, guest houses)
+- calculate distance to the nearest highway or rails from the place to sleep to express a place noisiness
 
 This is it in action:
 
-![Screenshot](screenshot.png)
+![Screenshot](screenshots/screenshot.png)
 
-The application has 2 separate parts, the client which is a [frontend web application](#frontend) using mapbox API and mapbox.js and the [backend application](#backend) written in [Rails](http://rubyonrails.org/), backed by PostGIS. The frontend application communicates with backend using a [REST API](#api).
+The application has 2 separate parts, the client which is a [frontend web application](#frontend) using mapbox API and mapbox.js and the [backend application](#backend) written in [Express](https://expressjs.com/), backed by PostGIS. The frontend application communicates with backend using a [REST API](#api).
 
 # Frontend
 
-The frontend application is a static HTML page (`index.html`), which shows a mapbox.js widget. It is displaying hotels, which are mostly in cities, thus the map style is based on the Emerald style. I modified the style to better highlight main sightseeing points, restaurants and bus stops, since they are all important when selecting a hotel. I also highlighted rails tracks to assist in finding a quiet location.
+The frontend consists of a single HTML page (`index.html`), that uses a JavaScript widget to display map layers. We use our own designed map style, which is basically adjusted Basic Template provided by Mapbox. Satellite layer was added with linear transformation to basic streets layer, most of the backgound colors were updated to make it easier to distinguish more landuses and different type of roads.
 
-All relevant frontend code is in `application.js` which is referenced from `index.html`. The frontend code is very simple, its only responsibilities are:
-- detecting user's location, using the standard [web location API](https://developer.mozilla.org/en-US/docs/Web/API/Geolocation/Using_geolocation)
-- displaying the sidebar panel with hotel list and filtering controls, driving the user interaction and calling the appropriate backend APIs
-- displaying geo features by overlaying the map with a geojson layer, the geojson is provided directly by backend APIs
+The top of a screen provides basic interaction with API calls by 2 numeric input fields and 1 select field (on-load functionality and distance within specific types of objects that is used to search for them in backend).
+
+File (`index.html`) also contains JavaScript to handle all events. The most of them are map events that are fired by Mapbox by default (load, click, double click, mouse move, mouse leave). However, we added a listener into the select field, mentioned above, that just generates Mapbox load event upon change of the selected item. Other input fields serve only to adjust the API calls and are not handled by any listeners. Therefore, their values are used when appropriate  API is called (that is, when user generates events on appropriate map layer).
+
+The goal of map events listeners is to:
+
+- call appropriate API, wait for response and use it to fill appropriate map layer
+- display data stored in the given map layer
 
 # Backend
 
-The backend application is written in Ruby on Rails and is responsible for querying geo data, formatting the geojson and data for the sidebar panel.
+The backend application is quite simple. It is written in Node.js framework called Express and is responsible for querying geo data and formatting the geojson.
 
 ## Data
 
-Hotel data is coming directly from Open Street Maps. I downloaded an extent covering whole Slovakia (around 1.2GB) and imported it using the `osm2pgsql` tool into the standard OSM schema in WGS 84 with hstore enabled. To speedup the queries I created an index on geometry column (`way`) in all tables. The application follows standard Rails conventions and all queries are placed in models inside `app/models`, mostly in `app/models/hotel.rb`. GeoJSON is generated by using a standard `st_asgeojson` function, however some postprocessing is necessary (in `app/controllers/search_controller.rb`) in order to merge all hotels into a single geojson.
+We loaded data from Open Street Maps covering whole Slovakia into PostGIS (extension of Postgres) using osm2pgsql tool. Application uses all of the three geometry types (point, line, polygon).
+
+Additionally, we created materialized view for one of the scenarios (get extended district stats) as it uses static query (can't be affected by user) and it's run time is quite long even though indexes were provided.
+
+The query to create materialized view:
+
+```
+CREATE MATERIALIZED VIEW extended_regional_stats AS
+
+WITH district_stats AS (
+  SELECT
+    districts.way AS way,
+    ROUND(ST_Area(ST_Transform(districts.way, 2163)) / 1000000) AS area,
+    name,
+    osm_id,
+    COUNT(*) FILTER (WHERE type = 'monument') AS monuments,
+    COUNT(*) FILTER (WHERE type = 'castle') AS castles,
+    COUNT(*) FILTER (WHERE type = 'ruins') AS ruins,
+    COUNT(*) FILTER (WHERE type = 'memorial') AS memorials,
+    COUNT(*) FILTER (WHERE type = 'museum') AS museums,
+    COUNT(*) FILTER (WHERE type = 'gallery') AS galleries
+  FROM
+  (
+    SELECT
+      way,
+      name,
+      osm_id
+    FROM
+      planet_osm_polygon
+    WHERE
+      name LIKE 'okres %'
+  ) districts
+  LEFT JOIN
+  (
+    SELECT
+      way,
+      COALESCE(historic, tourism) AS type
+    FROM
+      planet_osm_point
+    WHERE
+      historic IN ('monument', 'castle', 'ruins', 'memorial')
+      OR tourism IN ('museum', 'gallery')
+  ) attractions
+  ON
+    ST_Contains(districts.way, attractions.way)
+  GROUP BY
+    1,2,3,4
+)
+
+SELECT
+  ST_AsGeoJSON(ST_Transform(ds1.way, 4326)) AS geo,
+  ds1.area,
+  ds1.name,
+  ds1.osm_id,
+  ds1.monuments,
+  ds1.castles,
+  ds1.ruins,
+  ds1.memorials,
+  ds1.museums,
+  ds1.galleries,
+  COUNT(*) AS neighbors,
+  SUM(ds2.area) AS neighbor_area,
+  SUM(ds2.monuments) AS neighbor_monuments,
+  SUM(ds2.castles) AS neighbor_castles,
+  SUM(ds2.ruins) AS neighbor_ruins,
+  SUM(ds2.memorials) AS neighbor_memorials,
+  SUM(ds2.museums) AS neighbor_museums,
+  SUM(ds2.galleries) AS neighbor_galleries
+FROM
+  district_stats ds1
+LEFT JOIN
+  district_stats ds2
+ON
+  ST_Touches(ds1.way,ds2.way)
+GROUP BY
+  1,2,3,4,5,6,7,8,9,10
+```
+
+## Indexes
+
+Following indexes were provided:
+
+```
+-- non-geo indexes
+CREATE INDEX polygon_name_idx ON planet_osm_polygon (name varchar_pattern_ops);
+CREATE INDEX point_historic_idx ON planet_osm_point (historic);
+CREATE INDEX point_tourism_idx ON planet_osm_point (tourism);
+CREATE INDEX point_tourism_idx ON planet_osm_point (tourism);
+CREATE INDEX line_railway_idx ON planet_osm_line (railway);
+CREATE INDEX line_name_idx ON planet_osm_line (name varchar_pattern_ops);
+
+-- non-geo indexes (default)
+CREATE INDEX planet_osm_point_pkey ON planet_osm_point (osm_id);
+CREATE INDEX planet_osm_line_pkey ON planet_osm_line (osm_id);
+CREATE INDEX planet_osm_polygon_pkey ON planet_osm_polygon (osm_id);
+
+-- geo indexes (default)
+CREATE INDEX planet_osm_point_index ON gist(way);
+CREATE INDEX planet_osm_line_index ON gist(way);
+CREATE INDEX planet_osm_polygon_index ON gist(way);
+```
 
 ## Api
 
-**Find hotels in proximity to coordinates**
+**Find all Slovak districts with their area in square kilometres**
 
-`GET /search?lat=25346&long=46346123`
+`GET /api/get-regions`
 
-**Find hotels by name, sorted by proximity and quality**
+**Find all Slovak districts with their area in square kilometres, count of interesting places in district, count of neighboring districts and sum of their area in square kilometres along with sum of counts of interesting places**
 
-`GET /search?name=hviezda&lat=25346&long=46346123`
+`GET /api/get-regions-advanced`
 
-### Response
+**Find interesting places in a district**
 
-API calls return json responses with 2 top-level keys, `hotels` and `geojson`. `hotels` contains an array of hotel data for the sidebar, one entry per matched hotel. Hotel attributes are (mostly self-evident):
-```
-{
-  "name": "Modra hviezda",
-  "style": "modern", # cuisine style
-  "stars": 3,
-  "address": "Panska 31"
-  "image_url": "/assets/hotels/652.png"
-}
-```
-`geojson` contains a geojson with locations of all matched hotels and style definitions.
+`POST /api/get-local-attractions`
+
+Request body parameters:
+
+- osm_id: osm id of a district
+
+**Find places to sleep withing given range from interesting place with distance to closest highway or rails**
+
+`POST /api/get-local-attractions`
+
+Request body parameters:
+
+- osm_id: osm id of an interesting place
+- distance_hotel_attraction: range in meters to search for places to sleep around interesting place
+- distance_hotel_road: range in meters to search for highways and rails around place to sleep
