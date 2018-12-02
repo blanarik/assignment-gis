@@ -23,3 +23,5 @@ Build a map-based application, which lets the user see geo-based data on a map a
 **Data source**: Open Street Maps (Slovak region)
 
 **Technologies used**: `node.js`, `express.js`, `postgis`, `mapbox sdk`
+
+**Documentation**: [doc](documentation.md)
