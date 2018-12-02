@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset='utf-8' />
+    <title>Display a map</title>
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+
+    <script src='https://api.tiles.mapbox.com/mapbox-gl-js/v0.49.0/mapbox-gl.js'></script>
+    <link href='https://api.tiles.mapbox.com/mapbox-gl-js/v0.49.0/mapbox-gl.css' rel='stylesheet' />
+
+    <script src='https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.0.9/mapbox-gl-draw.js'></script>
+    <link rel='stylesheet' href='https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-draw/v1.0.9/mapbox-gl-draw.css' type='text/css'/>
+
+    <style>
+        body { margin:0; padding:0; }
+        #map { position:absolute; top:50px; bottom:0; width:100%; }
+        #simple-control { padding: 10px; }
+        span { padding: 0 20px; }
+    </style>
+</head>
+<body>
+<div id="simple-control">
+    <span>
+        Choose on-load functionality:
+        <select id="onload-query" onchange="map.fire('load')">
+            <option value="simple">Simple query (default osm tables)</option>
+            <option value="advanced">Advanced query (pre-processed MV)</option>
+        </select>
+    </span>
+    <span>
+        Search hotels within
+        <input id="distance-hotel-attraction" type="number" value="10000" min="1" max="">
+        meters from attraction.
+    </span>
+    <span>
+        Busy hotel is closer than
+        <input id="distance-hotel-road" type="number" value="1000" min="1" max="">
+        meters from highway or rails.
+    </span>
+</div>
+<div id='map'></div>
+
+<script>
+    mapboxgl.accessToken = 'pk.eyJ1IjoicGF0cmlrLWJsYW5hcmlrIiwiYSI6ImNqbXA0NHRocjFiOTgzdmpwdXFuYjY5Zm4ifQ.vQnW5rbsCXtN7fQWBXrjSQ';
+    const map = new mapboxgl.Map({
+        container: 'map',
+        style: 'mapbox://styles/patrik-blanarik/cjovmzejs6phj2rn0tpdwh9ex',
+        center: [19.712342, 48.514258],
+        zoom: 7
+    });
+
+    map.doubleClickZoom.disable();
+
+
+    // regions
+    map.on('load', async function () {
+        var url;
+        if(document.getElementById('onload-query').value == 'simple')
+            url = 'http://localhost:3000/api/get-regions';
+        else
+            url = 'http://localhost:3000/api/get-regions-advanced';
+        var response = await fetch(url);
+        var data = await response.json();
+
+        var mapLayer = map.getLayer('regions-layer');
+        if(typeof mapLayer !== 'undefined')
+            map.removeLayer('regions-layer').removeSource('regions-layer');
+
+        map.addLayer({
+            "id": "regions-layer",
+            "type": "fill",
+            "source": {
+                "type": "geojson",
+                "data": {
+                    "type": "FeatureCollection",
+                    "features": data
+                }
+            },
+            'layout': {},
+            'paint': {
+                'fill-color': 'rgba(252, 156, 47, 0.05)',
+                'fill-outline-color': 'rgba(252, 156, 47, 1)'
+            }
+        });
+    });
+
+    var popup = new mapboxgl.Popup({
+        closeButton: false,
+        closeOnClick: false
+    });
+
+    map.on('mousemove', 'regions-layer', function (e) {
+        map.getCanvas().style.cursor = 'crosshair';
+        var content = '<h2>' + e.features[0].properties.name + '</h2>'
+            + '<b>Area: </b>' + e.features[0].properties.area + ' km<sup>2</sup>' + '<br>';
+        if(e.features[0].properties.monuments !== undefined) {
+            content += '<br> <b>Monuments:</b> ' + e.features[0].properties.monuments;
+            content += '<br> <b>Castles:</b> ' + e.features[0].properties.castles;
+            content += '<br> <b>Ruins:</b> ' + e.features[0].properties.ruins;
+            content += '<br> <b>Memorials:</b> ' + e.features[0].properties.memorials;
+            content += '<br> <b>Museums:</b> ' + e.features[0].properties.museums;
+            content += '<br> <b>Galleries:</b> ' + e.features[0].properties.galleries;
+            content += '<br> <h3>Neighbor districts (' + e.features[0].properties.neighbors + '):</h3> <ul>';
+            content += '<li> Total area: ' + e.features[0].properties.neighbor_area + ' km<sup>2</sup></li>';
+            content += '<li> Monuments: ' + e.features[0].properties.neighbor_monuments + '</li>';
+            content += '<li> Castles: ' + e.features[0].properties.neighbor_castles + '</li>';
+            content += '<li> Ruins: ' + e.features[0].properties.neighbor_ruins + '</li>';
+            content += '<li> Memorials: ' + e.features[0].properties.neighbor_memorials + '</li>';
+            content += '<li> Museums: ' + e.features[0].properties.neighbor_museums + '</li>';
+            content += '<li> Galleries: ' + e.features[0].properties.neighbor_galleries + '</li></ul>';
+        }
+        content += '<br><i>(Double-click to show regional attractions)</i>';
+        popup.setLngLat(e.lngLat).setHTML(content).addTo(map);
+    });
+
+    map.on('mouseleave', 'regions-layer', function() {
+        map.getCanvas().style.cursor = '';
+        popup.remove();
+    });
+
+
+    // regional attractions
+    map.on('dblclick', 'regions-layer', async function(e) {
+        map.getCanvas().style.cursor = '';
+        popup.remove();
+
+        var request = {osm_id : e.features[0].properties.osm_id}
+        var response = await fetch('http://localhost:3000/api/get-local-attractions', {
+            method: "POST",
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(request)
+        });
+        var data = await response.json();
+
+        var mapLayer = map.getLayer('attractions-layer');
+        if(typeof mapLayer !== 'undefined')
+            map.removeLayer('attractions-layer').removeSource('attractions-layer');
+
+        var mapLayer = map.getLayer('hotels-layer');
+        if(typeof mapLayer !== 'undefined')
+            map.removeLayer('hotels-layer').removeSource('hotels-layer');
+
+        map.addLayer({
+            "id": "attractions-layer",
+            "type": "symbol",
+            "source": {
+                "type": "geojson",
+                "data": {
+                    "type": "FeatureCollection",
+                    "features": data
+                }
+            },
+            "layout": {
+                "icon-image": "{icon}-15",
+                "text-field": "{name}",
+                "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+                "text-offset": [0, 0.6],
+                "text-anchor": "top"
+            },
+            "paint": {
+                "text-color": "#0000ff"
+            }
+        });
+    });
+
+    map.on('mousemove', 'attractions-layer', function (e) {
+        map.getCanvas().style.cursor = 'pointer';
+        popup.setLngLat(e.lngLat).setHTML('<h2>' + e.features[0].properties.name + '</h2>'
+            + '<b>Type: </b>' + e.features[0].properties.type + '<br><br>'
+            + '<i>(Click to show nearby hotels)</i>'
+        ).addTo(map);
+    });
+
+    // nearby hotels
+    map.on('click', 'attractions-layer', async function(e) {
+        map.getCanvas().style.cursor = '';
+        popup.remove();
+
+        var request = {
+            osm_id : e.features[0].properties.osm_id,
+            distance_hotel_attraction : document.getElementById('distance-hotel-attraction').value,
+            distance_hotel_road : document.getElementById('distance-hotel-road').value
+        };
+        var response = await fetch('http://localhost:3000/api/get-nearby-hotels', {
+            method: "POST",
+            headers: {'Content-Type':'application/json'},
+            body: JSON.stringify(request)
+        });
+        var data = await response.json();
+        if(data == null)
+            alert('No hotels meet given requirements');
+        else {
+            var mapLayer = map.getLayer('hotels-layer');
+            if (typeof mapLayer !== 'undefined')
+                map.removeLayer('hotels-layer').removeSource('hotels-layer');
+
+            map.addLayer({
+                "id": "hotels-layer",
+                "type": "symbol",
+                "source": {
+                    "type": "geojson",
+                    "data": {
+                        "type": "FeatureCollection",
+                        "features": data
+                    }
+                },
+                "layout": {
+                    "icon-image": "{icon}-15",
+                    "text-field": "{name}",
+                    "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+                    "text-offset": [0, 0.6],
+                    "text-anchor": "top"
+                },
+                "paint": {
+                    "text-color": "#ff0000"
+                }
+            });
+        }
+    });
+
+    map.on('mousemove', 'hotels-layer', function (e) {
+        map.getCanvas().style.cursor = '';
+        popup.setLngLat(e.lngLat).setHTML('<h2>' + e.features[0].properties.name + '</h2>'
+            + '<b>Type: </b>' + e.features[0].properties.type + '<br>'
+            + (e.features[0].properties.distance_to_noise != 'null' ? '<b>Close to noise source (' + e.features[0].properties.distance_to_noise + ' meters)</b>' : 'No noise sources nearby')
+        ).addTo(map);
+    });
+</script>
+
+</body>
+</html>
